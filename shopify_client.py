@@ -3,13 +3,13 @@ import json
 import os
 from dotenv import load_dotenv
 
-load_dotenv()  # load env vars from .env
-
+load_dotenv() 
 
 class ShopifyClient:
     def __init__(self):
         self.store = os.getenv("SHOPIFY_STORE")
         self.token = os.getenv("ACCESS_TOKEN")
+        
         if not self.store or not self.token:
             raise ValueError("Missing SHOPIFY_STORE or ACCESS_TOKEN in .env")
 

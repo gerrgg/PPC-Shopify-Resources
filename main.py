@@ -3,6 +3,17 @@ import os
 import re
 from shopify_client import ShopifyClient
 
+def load_product_id_map(filepath="sheets/product_map/product_ids.csv"):
+  id_map = {}
+  with open(filepath, newline="") as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+      sku = row.get("sku") or row.get("SKU")
+      product_id = row.get("product_id")
+      if sku and product_id:
+        id_map[sku.strip()] = product_id.strip()
+  return id_map
+
 def make_title_from_url(url: str) -> str:
     basename = os.path.basename(url)            # "KS-Tech-UFS389006DA.pdf"
     filename, _ = os.path.splitext(basename)    # "KS-Tech-UFS389006DA"
@@ -26,18 +37,20 @@ shopify = ShopifyClient()
 # ---------------- Example usage ----------------
 if __name__ == "__main__":
 
+  id_map = load_product_id_map("sheets/product_map/product_ids.csv")
+
   PRODUCT_DATA = {}
 
-  with open("sheets/example.csv", newline="") as csvfile:
-    reader = csv.DictReader(csvfile)  # reads header row for keys
+  with open("sheets/sku-url.csv", newline="") as csvfile:
+    reader = csv.DictReader(csvfile)
     for row in reader:
-      sku = row["SKU"]
-      url = row["URL"]
+      sku = row["SKU"].strip()
+      url = row["URL"].strip()
 
-      try:
-        product_id = shopify.get_parent_id_from_sku(sku)
-      except Exception as e:
-        print(f"❌ Could not fetch product ID for SKU {sku}: {e}")
+      product_id = id_map.get(sku)
+
+      if not product_id:
+        print(f"❌ No product ID found in map for SKU {sku}")
         continue
 
       if product_id not in PRODUCT_DATA:
@@ -65,7 +78,7 @@ if __name__ == "__main__":
         uploaded_file_ids.append(file_id)
 
     print(uploaded_file_ids)
-    
+
     # 2. attach all at once
     if uploaded_file_ids:
       shopify.add_files_to_product(product_id, uploaded_file_ids)
