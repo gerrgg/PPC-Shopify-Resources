@@ -1,7 +1,7 @@
 import csv
 from shopify_client import ShopifyClient
 
-INPUT_CSV = "sheets/sku-url.csv"
+INPUT_CSV = "sheets/sku-url-fix.csv"
 OUTPUT_CSV = "sheets/product_map/product_ids.csv"
 OUTPUT_FAIL_CSV = "sheets/product_map/product_ids_fail.csv"
 

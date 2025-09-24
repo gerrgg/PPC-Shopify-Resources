@@ -37,32 +37,61 @@ class ShopifyClient:
 
     # ----------------- Variant helpers -----------------
     def get_parent_id_from_sku(self, sku):
-        query = """
-        query getProductBySku($sku: String!) {
-          productVariants(first: 1, query: $sku) {
-            edges {
-              node {
+      # First, try finding by variant SKU
+      query_variant = """
+      query getVariantBySku($sku: String!) {
+        productVariants(first: 1, query: $sku) {
+          edges {
+            node {
+              id
+              sku
+              product {
                 id
-                sku
-                product {
-                  id
-                  title
-                }
+                title
               }
             }
           }
         }
-        """
-        variables = {"sku": f"sku:{sku}"}
-        response = self.make_request(query, variables)
+      }
+      """
+      variables = {"sku": f"sku:{sku}"}
+      response = self.make_request(query_variant, variables)
 
-        variant_edges = (
-            response.get("data", {}).get("productVariants", {}).get("edges", [])
-        )
-        if not variant_edges:
-            raise Exception(f"No product found with SKU: {sku}")
+      variant_edges = (
+        response.get("data", {})
+        .get("productVariants", {})
+        .get("edges", [])
+      )
 
+      if variant_edges:
         return variant_edges[0]["node"]["product"]["id"]
+
+      # If not found as a variant, try finding directly as a product
+      query_product = """
+      query getProductBySku($sku: String!) {
+        products(first: 1, query: $sku) {
+          edges {
+            node {
+              id
+              title
+            }
+          }
+        }
+      }
+      """
+      response = self.make_request(query_product, variables)
+
+      product_edges = (
+        response.get("data", {})
+        .get("products", {})
+        .get("edges", [])
+      )
+
+      if product_edges:
+        return product_edges[0]["node"]["id"]
+
+      raise Exception(f"No product or variant found with SKU: {sku}")
+
 
     # ----------------- File helpers -----------------
     def upload_pdf(self, pdf_url, title, filename):
@@ -106,34 +135,130 @@ class ShopifyClient:
         return file_id
 
     def add_files_to_product(self, product_id, file_entries):
-        """
-        Stores multiple files in a product metafield (list.file_reference)
-        """
-        metafield_value = json.dumps(file_entries)
+      product_gid = self._normalize_product_gid(product_id)
 
-        query = """
-          mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) {
-              metafields { id namespace key value type ownerType }
-              userErrors { field message }
+      # Step 1: Fetch existing metafield
+      query_fetch = """
+        query getMetafield($id: ID!) {
+          product(id: $id) {
+            metafield(namespace: "fpusa", key: "resources") {
+              value
+              type
             }
           }
-        """
-        variables = {
-            "metafields": [
-                {
-                    "ownerId": self._normalize_product_gid(product_id),
-                    "namespace": "fpusa",
-                    "key": "resources",
-                    "type": "list.file_reference",
-                    "value": metafield_value,
-                }
-            ]
         }
+      """
+      existing_data = self.make_request(query_fetch, {"id": product_gid})
+      
+      existing_metafield = (
+          existing_data.get("data", {})
+          .get("product", {})
+          .get("metafield", {})
+      )
 
-        data = self.make_request(query, variables)
-        errors = data.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
-        if errors:
-            print("❌ Errors adding metafield:", errors)
-        else:
-            print("✅ All files added to product successfully!")
+      existing_ids = []
+      
+      if existing_metafield and existing_metafield.get("value"):
+          try:
+              existing_ids = json.loads(existing_metafield["value"])
+          except Exception:
+              existing_ids = []
+
+      # Step 2: Merge new file entries
+      all_ids = list(set(existing_ids + file_entries))
+
+      metafield_value = json.dumps(all_ids)
+
+      # Step 3: Save back to product
+      query_update = """
+        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields { id namespace key value type ownerType }
+            userErrors { field message }
+          }
+        }
+      """
+      variables = {
+          "metafields": [
+              {
+                  "ownerId": product_gid,
+                  "namespace": "fpusa",
+                  "key": "resources",
+                  "type": "list.file_reference",
+                  "value": metafield_value,
+              }
+          ]
+      }
+
+      data = self.make_request(query_update, variables)
+      errors = data.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
+      if errors:
+          print("❌ Errors adding metafield:", errors)
+      else:
+          print(f"✅ Files merged and saved to product {product_gid} successfully!")
+    
+    def delete_resources_metafield(self, product_id):
+      product_gid = self._normalize_product_gid(product_id)
+
+      query = """
+      mutation MetafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+        metafieldsDelete(metafields: $metafields) {
+          deletedMetafields {
+            key
+            namespace
+            ownerId
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+      """
+
+      variables = {
+          "metafields": [
+              {
+                  "ownerId": product_gid,
+                  "namespace": "fpusa",
+                  "key": "resources"
+              }
+          ]
+      }
+
+      result = self.make_request(query, variables)
+      errors = result.get("data", {}).get("metafieldsDelete", {}).get("userErrors", [])
+      if errors:
+          print(f"❌ Errors deleting metafield for {product_id}: {errors}")
+      else:
+          deleted = result.get("data", {}).get("metafieldsDelete", {}).get("deletedMetafields", [])
+          print(f"✅ Deleted metafields {deleted} for product {product_id}")
+
+
+    def getMetafield(self, product_id):
+      query = """
+      query getResourceMetafield($id: ID!) {
+        product(id: $id) {
+          id
+          title
+          metafield(namespace: "fpusa", key: "resources") {
+            id
+            namespace
+            key
+            type
+            value
+          }
+        }
+      }
+      """
+      product_gid = self._normalize_product_gid(product_id)
+      response = self.make_request(query, {"id": product_gid})
+
+      print(response)
+
+      metafield = (
+          response.get("data", {})
+          .get("product", {})
+          .get("metafield", {})
+      )
+      return metafield if metafield else None

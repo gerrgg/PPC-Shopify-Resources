@@ -41,7 +41,7 @@ if __name__ == "__main__":
 
   PRODUCT_DATA = {}
 
-  with open("sheets/sku-url.csv", newline="") as csvfile:
+  with open("sheets/sku-url-fix.csv", newline="") as csvfile:
     reader = csv.DictReader(csvfile)
     for row in reader:
       sku = row["SKU"].strip()
